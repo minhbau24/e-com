@@ -1,9 +1,19 @@
-fastapi>=0.110,<1.0
-uvicorn[standard]>=0.29,<1.0
+# Web framework
+django>=4.2,<5.0
+djangorestframework>=3.15,<4.0
+gunicorn>=22.0,<23.0
+
+# Data validation (kept for internal business logic)
 pydantic>=2.0,<3.0
 pydantic-settings>=2.2,<3.0
 python-dotenv>=1.0,<2.0
+
+# Database
 psycopg2-binary>=2.9,<3.0
-pytest>=8.0,<9.0
+
+# LLM / AI
 langchain-core>=0.3,<0.4
 langchain-google-genai>=2.0,<3.0
+
+# Testing
+pytest>=8.0,<9.0

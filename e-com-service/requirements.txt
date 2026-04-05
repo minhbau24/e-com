@@ -1,3 +1,8 @@
+# Web framework
+django>=4.2,<5.0
+djangorestframework>=3.15,<4.0
+gunicorn>=22.0,<23.0
+
 # Core data and environment
 numpy<2
 pandas>=2.0,<3.0
@@ -11,9 +16,7 @@ langgraph>=0.2,<1.0
 # PostgreSQL vector store
 psycopg2-binary>=2.9,<3.0
 
-# Backend base
-fastapi>=0.110,<1.0
-uvicorn[standard]>=0.29,<1.0
+# Data validation (kept for internal business logic)
 pydantic>=2.0,<3.0
 
 # Optional but commonly used in this project
