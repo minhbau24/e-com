@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+<head><title>Cart View</title></head>
+<body>
+  <h1>Cart {{ cart.id }}</h1>
+  <p>Customer: {{ cart.customer_id }}</p>
+  <ul>
+    {% for item in cart.items %}
+    <li>Book {{ item.book_id }} x {{ item.quantity }} @ {{ item.unit_price }}</li>
+    {% empty %}
+    <li>No items</li>
+    {% endfor %}
+  </ul>
+</body>
+</html>

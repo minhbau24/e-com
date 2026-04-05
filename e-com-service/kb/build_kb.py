@@ -32,8 +32,8 @@ try:
 except ImportError:  # pragma: no cover - optional dependency in editor environment
     RecursiveCharacterTextSplitter = None
 
-from core.config import settings
-from core.logging import setup_logging
+from utils.config import settings
+from utils.logging import setup_logging
 
 
 REQUIRED_COLUMNS = [

@@ -18,6 +18,7 @@ CREATE INDEX IF NOT EXISTS idx_kb_embeddings_doc_id
 CREATE INDEX IF NOT EXISTS idx_kb_embeddings_metadata_gin
     ON kb_embeddings USING GIN (metadata);
 
-CREATE INDEX IF NOT EXISTS idx_kb_embeddings_vector_cosine
-    ON kb_embeddings USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
+-- CREATE INDEX IF NOT EXISTS idx_kb_embeddings_vector_cosine
+--     ON kb_embeddings USING ivfflat (embedding vector_cosine_ops)
+--     WITH (lists = 100);
+

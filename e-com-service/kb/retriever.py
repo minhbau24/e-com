@@ -23,7 +23,7 @@ try:
 except ImportError:  # pragma: no cover
 	langchain_tool = None
 
-from core.config import settings
+from utils.config import settings
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

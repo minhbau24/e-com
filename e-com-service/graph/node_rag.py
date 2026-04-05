@@ -3,7 +3,7 @@
 import logging
 import time
 
-from core.config import settings
+from utils.config import settings
 from graph.types import ChatState
 from kb.retriever import create_langgraph_retriever_tool
 

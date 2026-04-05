@@ -9,7 +9,7 @@ from urllib import error, request as urlrequest
 
 import pandas as pd
 
-from core.config import settings
+from utils.config import settings
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

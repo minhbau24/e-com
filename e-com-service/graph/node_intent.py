@@ -14,7 +14,7 @@ try:
 except ImportError:  # pragma: no cover
 	ChatGoogleGenerativeAI = None
 
-from core.config import settings
+from utils.config import settings
 from graph.types import ChatState
 
 

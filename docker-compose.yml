@@ -1,38 +1,63 @@
+x-mysql-service: &mysql-service
+  restart: unless-stopped
+  environment:
+    DB_HOST: mysql-db
+  depends_on:
+    base-image:
+      condition: service_completed_successfully
+    mysql-db:
+      condition: service_healthy
+
+x-api-healthcheck: &api-healthcheck
+  test: [ "CMD-SHELL", "python -c \"import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(2); s.connect(('127.0.0.1', 8000)); s.close()\"" ]
+  interval: 15s
+  timeout: 5s
+  retries: 5
+
 services:
-  kb-postgres:
-    image: pgvector/pgvector:pg16
-    container_name: ecom-kb-postgres
+  base-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+    image: bookstore-base:latest
+    command: [ "echo", "Base image built" ]
+
+  mysql-db:
+    image: mysql:8.0
+    container_name: bookstore-mysql
     restart: unless-stopped
     environment:
-      POSTGRES_DB: kb_db
-      POSTGRES_USER: kb_user
-      POSTGRES_PASSWORD: kb_password
+      MYSQL_ROOT_PASSWORD: app_password
+      MYSQL_DATABASE: app_db
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: app_password
     ports:
-      - "5432:5432"
+      - "3307:3306"
     volumes:
-      - kb_postgres_data:/var/lib/postgresql/data
-      - ./e-com-service/db/init:/docker-entrypoint-initdb.d
+      - mysql_data:/var/lib/mysql
+      - ./mysql_init:/docker-entrypoint-initdb.d
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U kb_user -d kb_db" ]
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  search-postgres:
-    image: postgres:16
-    container_name: search-service-postgres
+  ecom-postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ecom-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: search_db
-      POSTGRES_USER: search_user
-      POSTGRES_PASSWORD: search_password
+      POSTGRES_DB: ecom_db
+      POSTGRES_USER: ecom_user
+      POSTGRES_PASSWORD: ecom_password
     ports:
-      - "5433:5432"
+      - "5432:5432"
     volumes:
-      - search_postgres_data:/var/lib/postgresql/data
-      - ./search-service/db/init:/docker-entrypoint-initdb.d
+      - ecom_postgres_data:/var/lib/postgresql/data
+      - ./e-com-service/db/init/001_pgvector.sql:/docker-entrypoint-initdb.d/001_pgvector.sql:ro
+      - ./search-service/db/init/001_search_products.sql:/docker-entrypoint-initdb.d/002_search_products.sql:ro
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U search_user -d search_db" ]
+      test: [ "CMD-SHELL", "pg_isready -U ecom_user -d ecom_db" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -44,32 +69,22 @@ services:
     image: ecom-search-api:latest
     container_name: search-service-api
     restart: unless-stopped
-    command: gunicorn search_project.wsgi:application --bind 0.0.0.0:8001 --workers 2 --timeout 120
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8001 --workers 2 --timeout 120
     env_file:
       - ./search-service/.env
     environment:
-      POSTGRES_URL: postgresql://search_user:search_password@search-postgres:5432/search_db
+      POSTGRES_URL: postgresql://ecom_user:ecom_password@ecom-postgres:5432/ecom_db
     ports:
       - "8001:8001"
+    healthcheck:
+      test: [ "CMD-SHELL", "python -c \"import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(2); s.connect(('127.0.0.1', 8001)); s.close()\"" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     depends_on:
-      search-postgres:
-        condition: service_healthy
-
-  seed-search:
-    image: ecom-search-api:latest
-    container_name: search-service-seed
-    profiles: [ "seed" ]
-    restart: "no"
-    command: >
-      python scripts/import_products.py --source /seed-data/product.csv --database-url postgresql://search_user:search_password@search-postgres:5432/search_db --table search_products
-    env_file:
-      - ./search-service/.env
-    environment:
-      POSTGRES_URL: postgresql://search_user:search_password@search-postgres:5432/search_db
-    volumes:
-      - ./e-com-service/data:/seed-data:ro
-    depends_on:
-      search-postgres:
+      base-image:
+        condition: service_completed_successfully
+      ecom-postgres:
         condition: service_healthy
 
   ecom-api:
@@ -79,36 +94,148 @@ services:
     image: ecom-api:latest
     container_name: ecom-service-api
     restart: unless-stopped
-    command: gunicorn ecom_project.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120
     env_file:
       - ./e-com-service/.env
     environment:
-      POSTGRES_URL: postgresql://kb_user:kb_password@kb-postgres:5432/kb_db
+      POSTGRES_URL: postgresql://ecom_user:ecom_password@ecom-postgres:5432/ecom_db
       SEARCH_SERVICE_URL: http://search-api:8001/search
     ports:
-      - "8000:8000"
+      - "8002:8000"
+    healthcheck: *api-healthcheck
     depends_on:
-      kb-postgres:
+      base-image:
+        condition: service_completed_successfully
+      ecom-postgres:
         condition: service_healthy
       search-api:
-        condition: service_started
+        condition: service_healthy
 
-  seed-kb:
-    image: ecom-api:latest
-    container_name: ecom-service-seed-kb
-    profiles: [ "seed" ]
-    restart: "no"
-    command: >
-      sh -c 'if [ -n "$$GOOGLE_API_KEY" ]; then python -m kb.build_kb; else echo "GOOGLE_API_KEY is empty, skip kb/build_kb.py"; fi'
-    env_file:
-      - ./e-com-service/.env
+  api-gateway:
+    <<: *mysql-service
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: api-gateway
     environment:
-      PYTHONPATH: /app
-      POSTGRES_URL: postgresql://kb_user:kb_password@kb-postgres:5432/kb_db
+      DB_HOST: mysql-db
+      DB_NAME: api_gateway_db
+    healthcheck: *api-healthcheck
+    ports:
+      - "8000:8000"
+
+  book-service:
+    <<: *mysql-service
+    build:
+      context: ./book-service
+    container_name: book-service
+    environment:
+      DB_HOST: mysql-db
+      DB_NAME: book_db
+    healthcheck: *api-healthcheck
+
+  cart-service:
+    <<: *mysql-service
+    build:
+      context: ./cart-service
+    container_name: cart-service
+    environment:
+      DB_HOST: mysql-db
+      DB_NAME: cart_db
+    healthcheck: *api-healthcheck
+
+  catalog-service:
+    <<: *mysql-service
+    build:
+      context: ./catalog-service
+    container_name: catalog-service
+    environment:
+      DB_HOST: mysql-db
+      DB_NAME: catalog_db
+    healthcheck: *api-healthcheck
+
+  comment-rate-service:
+    <<: *mysql-service
+    build:
+      context: ./comment-rate-service
+    container_name: comment-rate-service
+    environment:
+      DB_HOST: mysql-db
+      DB_NAME: comment_rate_db
+    healthcheck: *api-healthcheck
+
+  customer-service:
+    <<: *mysql-service
+    build:
+      context: ./customer-service
+    container_name: customer-service
+    environment:
+      DB_HOST: mysql-db
+      DB_NAME: customer_db
+    healthcheck: *api-healthcheck
+
+  manager-service:
+    <<: *mysql-service
+    build:
+      context: ./manager-service
+    container_name: manager-service
+    environment:
+      DB_HOST: mysql-db
+      DB_NAME: manager_db
+    healthcheck: *api-healthcheck
+
+  order-service:
+    <<: *mysql-service
+    build:
+      context: ./order-service
+    container_name: order-service
+    environment:
+      DB_HOST: mysql-db
+      DB_NAME: order_db
+    healthcheck: *api-healthcheck
+
+  pay-service:
+    <<: *mysql-service
+    build:
+      context: ./pay-service
+    container_name: pay-service
+    environment:
+      DB_HOST: mysql-db
+      DB_NAME: pay_db
+    healthcheck: *api-healthcheck
+
+  ship-service:
+    <<: *mysql-service
+    build:
+      context: ./ship-service
+    container_name: ship-service
+    environment:
+      DB_HOST: mysql-db
+      DB_NAME: ship_db
+    healthcheck: *api-healthcheck
+
+  staff-service:
+    <<: *mysql-service
+    build:
+      context: ./staff-service
+    container_name: staff-service
+    environment:
+      DB_HOST: mysql-db
+      DB_NAME: staff_db
+    healthcheck: *api-healthcheck
+
+  storefront:
+    build:
+      context: ./storefront
+      dockerfile: Dockerfile
+    container_name: storefront
+    restart: unless-stopped
+    ports:
+      - "80:80"
     depends_on:
-      kb-postgres:
+      api-gateway:
         condition: service_healthy
 
 volumes:
-  kb_postgres_data:
-  search_postgres_data:
+  mysql_data:
+  ecom_postgres_data:

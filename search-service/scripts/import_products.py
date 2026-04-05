@@ -38,15 +38,39 @@ def clean_text(value: str | None) -> str:
     return " ".join(value.replace("\r", " ").replace("\n", " ").split())
 
 
-def extract_first_match(patterns: list[str], text: str | None, flags: int = re.IGNORECASE) -> str | None:
+def extract_label_values(text: str | None, patterns: dict[str, list[str]]) -> dict[str, str]:
     if not text:
-        return None
-    for pattern in patterns:
-        match = re.search(pattern, text, flags)
-        if match:
-            value = clean_text(match.group(1))
-            return value or None
-    return None
+        return {}
+
+    label_lookup: dict[str, str] = {}
+    label_parts: list[str] = []
+    for field_name, aliases in patterns.items():
+        for alias in aliases:
+            label_lookup[alias.casefold()] = field_name
+            label_parts.append(re.escape(alias))
+
+    if not label_parts:
+        return {}
+
+    regex = re.compile(rf"(?P<label>{'|'.join(label_parts)})\s*:\s*", re.IGNORECASE)
+    matches = list(regex.finditer(text))
+    if not matches:
+        return {}
+
+    extracted: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        field_name = label_lookup.get(match.group("label").casefold())
+        if not field_name or field_name in extracted:
+            continue
+
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        value = clean_text(text[start:end]).strip("-–—. ")
+        value = re.split(r"\s*-{5,}\s*", value, maxsplit=1)[0].strip()
+        if value:
+            extracted[field_name] = value
+
+    return extracted
 
 
 def extract_year(text: str | None) -> int | None:
@@ -126,23 +150,17 @@ def parse_product_row(row: dict[str, str]) -> ParsedProduct:
     description = clean_text(row.get("description"))
     combined_content = " ".join(part for part in [short_description, description] if part)
 
-    author = extract_first_match(
-        [
-            r"(?:Tác giả|Author):\s*(.+?)(?=\s*(?:Nhà xuất bản:|Publisher:|Công ty phát hành:|Năm xuất bản:|Loại bìa:|Format:|Số trang:|Language:|Ngôn ngữ:|ISBN:|Kích thước:|$))",
-        ],
+    metadata = extract_label_values(
         combined_content,
+        {
+            "author": ["Tác giả", "Author"],
+            "publisher": ["Nhà xuất bản", "Publisher", "Công ty phát hành"],
+            "cover_type": ["Loại bìa", "Format"],
+        },
     )
-    publisher = extract_first_match(
-        [
-            r"(?:Nhà xuất bản|Publisher|Công ty phát hành):\s*(.+?)(?=\s*(?:Năm xuất bản:|Loại bìa:|Format:|Số trang:|Language:|Ngôn ngữ:|ISBN:|Kích thước:|$))",
-        ],
-        combined_content,
-    )
-    cover_type = extract_first_match(
-        [r"(?:Loại bìa|Format):\s*(.+?)(?=\s*(?:Số trang:|Language:|Ngôn ngữ:|ISBN:|Kích thước:|$))"],
-        combined_content,
-    )
-    cover_type = normalize_cover_type(cover_type)
+    author = metadata.get("author")
+    publisher = metadata.get("publisher")
+    cover_type = normalize_cover_type(metadata.get("cover_type"))
     language = infer_language(combined_content)
     publication_year = extract_year(combined_content)
     page_count = extract_page_count(combined_content)
@@ -173,10 +191,15 @@ def parse_product_row(row: dict[str, str]) -> ParsedProduct:
     )
 
 
-def load_rows(source_csv: Path) -> list[ParsedProduct]:
+def load_rows(source_csv: Path, limit: int | None = None) -> list[ParsedProduct]:
     with source_csv.open("r", encoding="utf-8-sig", newline="") as file_handle:
         reader = csv.DictReader(file_handle)
-        return [parse_product_row(row) for row in reader]
+        rows: list[ParsedProduct] = []
+        for index, row in enumerate(reader):
+            if limit is not None and limit > 0 and index >= limit:
+                break
+            rows.append(parse_product_row(row))
+        return rows
 
 
 def upsert_rows(database_url: str, table_name: str, rows: list[ParsedProduct]) -> int:
@@ -253,6 +276,7 @@ def upsert_rows(database_url: str, table_name: str, rows: list[ParsedProduct]) -
 def main() -> None:
     parser = argparse.ArgumentParser(description="Import source CSV into search_products.")
     parser.add_argument("--source", default=str(DEFAULT_SOURCE_CSV), help="Source product CSV path")
+    parser.add_argument("--limit", type=int, default=0, help="Optional max rows to import (0 means all)")
     parser.add_argument(
         "--database-url",
         default=os.getenv("POSTGRES_URL", ""),
@@ -271,7 +295,8 @@ def main() -> None:
     if not args.database_url:
         raise SystemExit("POSTGRES_URL is required")
 
-    rows = load_rows(source_csv)
+    import_limit = args.limit if args.limit and args.limit > 0 else None
+    rows = load_rows(source_csv, limit=import_limit)
     inserted = upsert_rows(args.database_url, args.table, rows)
     print(f"Imported {inserted} products into {args.table}")
 
