@@ -1,0 +1,114 @@
+services:
+  kb-postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ecom-kb-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kb_db
+      POSTGRES_USER: kb_user
+      POSTGRES_PASSWORD: kb_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - kb_postgres_data:/var/lib/postgresql/data
+      - ./e-com-service/db/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U kb_user -d kb_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  search-postgres:
+    image: postgres:16
+    container_name: search-service-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: search_db
+      POSTGRES_USER: search_user
+      POSTGRES_PASSWORD: search_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - search_postgres_data:/var/lib/postgresql/data
+      - ./search-service/db/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U search_user -d search_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  search-api:
+    build:
+      context: ./search-service
+      dockerfile: Dockerfile
+    image: ecom-search-api:latest
+    container_name: search-service-api
+    restart: unless-stopped
+    command: uvicorn main:app --host 0.0.0.0 --port 8001
+    env_file:
+      - ./search-service/.env
+    environment:
+      POSTGRES_URL: postgresql://search_user:search_password@search-postgres:5432/search_db
+    ports:
+      - "8001:8001"
+    depends_on:
+      search-postgres:
+        condition: service_healthy
+
+  seed-search:
+    image: ecom-search-api:latest
+    container_name: search-service-seed
+    profiles: [ "seed" ]
+    restart: "no"
+    command: >
+      python scripts/import_products.py --source /seed-data/product.csv --database-url postgresql://search_user:search_password@search-postgres:5432/search_db --table search_products
+    env_file:
+      - ./search-service/.env
+    environment:
+      POSTGRES_URL: postgresql://search_user:search_password@search-postgres:5432/search_db
+    volumes:
+      - ./e-com-service/data:/seed-data:ro
+    depends_on:
+      search-postgres:
+        condition: service_healthy
+
+  ecom-api:
+    build:
+      context: ./e-com-service
+      dockerfile: Dockerfile
+    image: ecom-api:latest
+    container_name: ecom-service-api
+    restart: unless-stopped
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    env_file:
+      - ./e-com-service/.env
+    environment:
+      POSTGRES_URL: postgresql://kb_user:kb_password@kb-postgres:5432/kb_db
+      SEARCH_SERVICE_URL: http://search-api:8001/search
+    ports:
+      - "8000:8000"
+    depends_on:
+      kb-postgres:
+        condition: service_healthy
+      search-api:
+        condition: service_started
+
+  seed-kb:
+    image: ecom-api:latest
+    container_name: ecom-service-seed-kb
+    profiles: [ "seed" ]
+    restart: "no"
+    command: >
+      sh -c 'if [ -n "$$GOOGLE_API_KEY" ]; then python -m kb.build_kb; else echo "GOOGLE_API_KEY is empty, skip kb/build_kb.py"; fi'
+    env_file:
+      - ./e-com-service/.env
+    environment:
+      PYTHONPATH: /app
+      POSTGRES_URL: postgresql://kb_user:kb_password@kb-postgres:5432/kb_db
+    depends_on:
+      kb-postgres:
+        condition: service_healthy
+
+volumes:
+  kb_postgres_data:
+  search_postgres_data:

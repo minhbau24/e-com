@@ -1,0 +1,20 @@
+# Core data and environment
+numpy<2
+pandas>=2.0,<3.0
+python-dotenv>=1.0,<2.0
+
+# KB build and embeddings
+langchain-google-genai>=2.0,<3.0
+langchain-text-splitters>=0.3,<1.0
+langgraph>=0.2,<1.0
+
+# PostgreSQL vector store
+psycopg2-binary>=2.9,<3.0
+
+# Backend base
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29,<1.0
+pydantic>=2.0,<3.0
+
+# Optional but commonly used in this project
+faiss-cpu>=1.8,<2.0
